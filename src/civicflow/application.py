@@ -9,6 +9,7 @@ from .audit import AuditLog
 from .database import Database
 from .idempotency import IdempotencyStore
 from .inbox import Inbox
+from .inbox_conflicts import InboxConflictService
 from .jobs import JobQueue
 from .ledger import Ledger
 from .outbox import Outbox
@@ -23,6 +24,7 @@ class CivicFlow:
     clock: Clock
     repository: EntityRepository
     inbox: Inbox
+    inbox_conflicts: InboxConflictService
     outbox: Outbox
     ledger: Ledger
     reservations: ReservationBook
@@ -33,7 +35,7 @@ class CivicFlow:
         database = Database(path); database.initialize(); clock = Clock(fixed_now)
         audit = AuditLog(clock); idempotency = IdempotencyStore(clock)
         repository = EntityRepository(database, clock, audit, idempotency)
-        return cls(database, clock, repository, Inbox(database, clock), Outbox(database, clock), Ledger(database, clock), ReservationBook(database), JobQueue(database, clock))
+        return cls(database, clock, repository, Inbox(database, clock, audit), InboxConflictService(database, clock, audit), Outbox(database, clock), Ledger(database, clock), ReservationBook(database), JobQueue(database, clock))
 
     def verify(self) -> dict:
         with self.database.connect() as connection:

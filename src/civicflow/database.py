@@ -72,8 +72,15 @@ CREATE TABLE IF NOT EXISTS inbox_conflicts (
     sequence INTEGER NOT NULL,
     existing_digest TEXT NOT NULL,
     incoming_digest TEXT NOT NULL,
-    received_at TEXT NOT NULL
+    summary_json TEXT NOT NULL DEFAULT '',
+    incoming_payload_json TEXT NOT NULL DEFAULT '',
+    received_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    resolved_at TEXT,
+    resolved_by TEXT,
+    resolution TEXT
 );
+CREATE INDEX IF NOT EXISTS inbox_conflicts_chain ON inbox_conflicts(source, source_key, sequence, conflict_id);
 CREATE TABLE IF NOT EXISTS outbox_messages (
     message_id TEXT PRIMARY KEY,
     topic TEXT NOT NULL,
@@ -127,6 +134,19 @@ CREATE INDEX IF NOT EXISTS jobs_due ON scheduled_jobs(status, run_at, lease_unti
 """
 
 
+# 旧版本表缺少的列,按表名逐项补齐;迁移必须幂等,重复初始化不得报错。
+MIGRATIONS: dict[str, dict[str, str]] = {
+    "inbox_conflicts": {
+        "summary_json": "TEXT NOT NULL DEFAULT ''",
+        "incoming_payload_json": "TEXT NOT NULL DEFAULT ''",
+        "status": "TEXT NOT NULL DEFAULT 'pending'",
+        "resolved_at": "TEXT",
+        "resolved_by": "TEXT",
+        "resolution": "TEXT",
+    },
+}
+
+
 class Database:
     def __init__(self, path: str | Path):
         self.path = str(path)
@@ -142,6 +162,15 @@ class Database:
     def initialize(self) -> None:
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            self._migrate(connection)
+
+    @staticmethod
+    def _migrate(connection: sqlite3.Connection) -> None:
+        for table, columns in MIGRATIONS.items():
+            existing = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+            for name, definition in columns.items():
+                if name not in existing:
+                    connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
     @contextmanager
     def transaction(self, *, immediate: bool = True) -> Iterator[sqlite3.Connection]:
