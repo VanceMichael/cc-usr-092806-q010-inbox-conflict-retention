@@ -72,8 +72,17 @@ CREATE TABLE IF NOT EXISTS inbox_conflicts (
     sequence INTEGER NOT NULL,
     existing_digest TEXT NOT NULL,
     incoming_digest TEXT NOT NULL,
-    received_at TEXT NOT NULL
+    diff_json TEXT NOT NULL DEFAULT '{}',
+    incoming_json TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    resolution TEXT,
+    resolved_by TEXT,
+    resolved_at TEXT,
+    occurrences INTEGER NOT NULL DEFAULT 1,
+    received_at TEXT NOT NULL,
+    last_received_at TEXT
 );
+CREATE INDEX IF NOT EXISTS inbox_conflicts_lookup ON inbox_conflicts(source, source_key, sequence, incoming_digest);
 CREATE TABLE IF NOT EXISTS outbox_messages (
     message_id TEXT PRIMARY KEY,
     topic TEXT NOT NULL,
@@ -126,6 +135,26 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
 CREATE INDEX IF NOT EXISTS jobs_due ON scheduled_jobs(status, run_at, lease_until);
 """
 
+# 旧版 inbox_conflicts 表缺少的列，按名补齐；默认值必须兼容 SQLite 的 ALTER TABLE 限制。
+INBOX_CONFLICT_MIGRATIONS = {
+    "diff_json": "ALTER TABLE inbox_conflicts ADD COLUMN diff_json TEXT NOT NULL DEFAULT '{}'",
+    "incoming_json": "ALTER TABLE inbox_conflicts ADD COLUMN incoming_json TEXT",
+    "status": "ALTER TABLE inbox_conflicts ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'",
+    "resolution": "ALTER TABLE inbox_conflicts ADD COLUMN resolution TEXT",
+    "resolved_by": "ALTER TABLE inbox_conflicts ADD COLUMN resolved_by TEXT",
+    "resolved_at": "ALTER TABLE inbox_conflicts ADD COLUMN resolved_at TEXT",
+    "occurrences": "ALTER TABLE inbox_conflicts ADD COLUMN occurrences INTEGER NOT NULL DEFAULT 1",
+    "last_received_at": "ALTER TABLE inbox_conflicts ADD COLUMN last_received_at TEXT",
+}
+
+
+def _migrate_inbox_conflicts(connection: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(inbox_conflicts)")}
+    for name, ddl in INBOX_CONFLICT_MIGRATIONS.items():
+        if name not in columns:
+            connection.execute(ddl)
+    connection.execute("UPDATE inbox_conflicts SET last_received_at=received_at WHERE last_received_at IS NULL")
+
 
 class Database:
     def __init__(self, path: str | Path):
@@ -142,6 +171,7 @@ class Database:
     def initialize(self) -> None:
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            _migrate_inbox_conflicts(connection)
 
     @contextmanager
     def transaction(self, *, immediate: bool = True) -> Iterator[sqlite3.Connection]:

@@ -9,6 +9,13 @@ class ValidationError(CivicFlowError):
 class ConflictError(CivicFlowError):
     """版本、幂等键或状态发生冲突。"""
 
+class InboxConflictError(ConflictError):
+    """相同来源序号收到异文；冲突已持久化，等待人工复核。"""
+
+    def __init__(self, message: str, *, conflict: dict):
+        super().__init__(message)
+        self.conflict = conflict
+
 class NotFoundError(CivicFlowError):
     """目标记录不存在。"""
 
